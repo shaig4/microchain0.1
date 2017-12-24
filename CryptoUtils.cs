@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Runtime.Serialization.Formatters.Binary;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -25,61 +26,89 @@ namespace blockchain1
             }
         }
 
-        public static void Pay(Network net, RequestParent[] requestParents, RequestTrans trans, bool genesis = false)
+        public static Coin[] Pay(Network net, RequestParent[] requestParents, RequestChild[] requestChildren, bool genesis = false)
         {
-            decimal amounts = 0;
-            if (!genesis)
-                foreach (var parent in trans.parents)
-                {
-                    var coin = net.coins[parent];
-                    amounts += coin.amount;
-                    if (!VerifyData(coin.publicKey, coin.hash, parent.sig))
-                        throw new ArgumentException("order could not unlock");
-
-                    // coins.Add(coin);
-                    //net.coins.Remove(order.publicKey);
-                }
-
-            if (trans.amount != amounts)
-                throw new ArgumentException("orders amount not match");
-
-             net.coins.Add(trans.publicKey, trans);
-        }
-
-        public static List<Trans> PayRequest(RequestParent[] requestParents, RequestTrans[] requestTrans, bool genesis = false)
-        {
-            if (requestParents.Length > 1 && requestTrans.Length > 1)
+            if (requestParents.Length > 1 && requestChildren.Length > 1)
                 throw new ArgumentException("cant move many to many");
 
-
-            var res = new List<Trans>();
-            foreach (var rt in requestTrans)
+            if (!genesis)
             {
-                Trans t = new Trans
+                if (requestParents.GroupBy(a => a.publicKey).Count() != requestParents.Count()
+                    || requestChildren.GroupBy(a => a.publicKey).Count() != requestChildren.Count())
+                    throw new ArgumentException("duplicated coins");
+
+                decimal amount = 0;
+                foreach (var parent in requestParents)
+                {
+                    var coin = net.coins[parent.publicKey];
+                    amount += coin.amount;
+                    if (!VerifyData(coin.publicKey, coin.hash, parent.sig))
+                        throw new ArgumentException("order could not unlock");
+                    if (coin.available)
+                        throw new ArgumentException("a used coin");
+                }
+                if (requestChildren.Sum(a => a.amount) != amount)//1+1=2 || 2=1+1
+                    throw new ArgumentException("orders amount not match");
+            }
+
+
+            var res = new List<Coin>();
+            foreach (var rt in requestChildren)
+            {
+                if (net.coins.ContainsKey(rt.publicKey))
+                    throw new ArgumentException("coin alread exist");
+
+                var t = new Coin
                 {
                     amount = rt.amount,
                     data = rt.data,
-                    parents = requestParents,
                     time = DateTime.UtcNow,
-                    publicKey = rt.publicKey
+                    publicKey = rt.publicKey,
+                    parents= requestParents.Select(a=>a.publicKey).ToArray()
                 };
-                t.hash = Hash(JsonConvert.SerializeObject(t)
-                    + string.Join(";", requestParents.Select(a => a.sig)));
+
+                var sigsBytes = requestParents.SelectMany(a => SerializeToBytes(a.sig));
+                t.hash = Hash(SerializeToBytes(t).Concat(sigsBytes).ToArray());
                 res.Add(t);
             }
-            return res;
+
+            if (!genesis)
+                foreach (var p in requestParents)
+                    net.coins[p.publicKey].available = false;
+
+            foreach (var t in res)
+            {
+                t.available = true;
+                net.coins.Add(t.publicKey, t);
+            }
+
+            return res.ToArray();
         }
+
+         static byte[] SerializeToBytes(object t)
+        {
+            if (t == null)
+                return new byte[0];
+
+            using (var ms = new MemoryStream())
+            {
+                var ser = new BinaryFormatter();
+                ser.Serialize(ms, t);
+                return (ms.ToArray());
+            }
+        }
+
         //static string Encrypt(string value, string pwd)
         //{
         //    var pwdBytes = Encoding.UTF8.GetBytes(pwd);
-        //    return Convert.ToBase64String(
+        //    return ByteToString(
         //        EncryptDecrypt(Encoding.UTF8.GetBytes(value),
         //        pwdBytes, pwdBytes.Take(10).ToArray(), true));
         //}
         //static string Decrypt(string value, string pwd)
         //{
         //    var pwdBytes = Encoding.UTF8.GetBytes(pwd);
-        //    return Convert.ToBase64String(
+        //    return ByteToString(
         //        EncryptDecrypt(Encoding.UTF8.GetBytes(value),
         //        pwdBytes, pwdBytes.Take(10).ToArray(), true));
         //}
@@ -112,25 +141,33 @@ namespace blockchain1
         //        return stream.ToArray();
         //    }
         //}
-        public static string Hash(string secret)
+        public static string Hash(byte[] secret)
         {
-            using (var sha256 = SHA256.Create())
+            using (var sha = SHA512.Create())
             {
-                var varhashedBytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(secret));
-                return Convert.ToBase64String(varhashedBytes);
+                var varhashedBytes = sha.ComputeHash((secret));
+                return ByteToString(varhashedBytes);
             }
         }
-        public static string Encrypt(string publicKey, string secret)
+        public static string ByteToString(byte[] b)
         {
-            using (RSA rsa = RSA.Create())
-            {
-                rsa.KeySize = keySize;
-                rsa.ImportParameters(RSAParametersSerializable.DeSer(publicKey));
-                //var   pr = rsa.ExportParameters(true);
-                //  var k = ExportPrivateKey(pr);
-                return Convert.ToBase64String(rsa.Encrypt(Encoding.UTF8.GetBytes(secret), RSAEncryptionPadding.OaepSHA1));
-            }
+            return Merkator.BitCoin.Base58Encoding.EncodeWithCheckSum(b);
         }
+        public static byte[] StringToByte(string str)
+        {
+            return Merkator.BitCoin.Base58Encoding.DecodeWithCheckSum(str);
+        }
+        //public static string Encrypt(string publicKey, string secret)
+        //{
+        //    using (RSA rsa = RSA.Create())
+        //    {
+        //        rsa.KeySize = keySize;
+        //        rsa.ImportParameters(RSAParametersSerializable.DeSer(publicKey));
+        //        //var   pr = rsa.ExportParameters(true);
+        //        //  var k = ExportPrivateKey(pr);
+        //        return ByteToString(rsa.Encrypt(Encoding.UTF8.GetBytes(secret), RSAEncryptionPadding.OaepSHA1));
+        //    }
+        //}
         public static string Sign(string privateKey, string secret)
         {
             using (RSA rsa = RSA.Create())
@@ -138,7 +175,7 @@ namespace blockchain1
                 rsa.KeySize = keySize;
                 var hash = (Encoding.UTF8.GetBytes(secret));
                 rsa.ImportParameters(RSAParametersSerializable.DeSer(privateKey));
-                return Convert.ToBase64String(rsa.SignData(hash,
+                return ByteToString(rsa.SignData(hash,
                    HashAlgorithmName.SHA512, RSASignaturePadding.Pkcs1));
             }
         }
@@ -149,23 +186,22 @@ namespace blockchain1
                 rsa.KeySize = keySize;
                 var hash = (Encoding.UTF8.GetBytes(data));
                 rsa.ImportParameters(RSAParametersSerializable.DeSer(publicKey));
-                return (rsa.VerifyData(hash, Convert.FromBase64String(sig),
-                   HashAlgorithmName.SHA512, RSASignaturePadding.Pkcs1));
+                return (rsa.VerifyData(hash, StringToByte(sig),HashAlgorithmName.SHA512, RSASignaturePadding.Pkcs1));
             }
         }
-        public static string Decrypt(string privateKey, string secret)
-        {
-            using (RSA rsa = RSA.Create())
-            {
-                rsa.KeySize = keySize;
-                rsa.ImportParameters(JsonConvert.DeserializeObject<RSAParameters>(privateKey));
-                return Encoding.UTF8.GetString(rsa.Decrypt(Convert.FromBase64String(secret), RSAEncryptionPadding.OaepSHA1));
-            }
-        }
-        public static string GetUnlocker(string privateKey, string sig)
-        {
-            return CryptoUtils.Decrypt(privateKey, sig).Split(new char[] { ';' }, 2)[0];
-        }
+        //public static string Decrypt(string privateKey, string secret)
+        //{
+        //    using (RSA rsa = RSA.Create())
+        //    {
+        //        rsa.KeySize = keySize;
+        //        rsa.ImportParameters(JsonConvert.DeserializeObject<RSAParameters>(privateKey));
+        //        return Encoding.UTF8.GetString(rsa.Decrypt(StringToByte(secret), RSAEncryptionPadding.OaepSHA1));
+        //    }
+        //}
+        //public static string GetUnlocker(string privateKey, string sig)
+        //{
+        //    return CryptoUtils.Decrypt(privateKey, sig).Split(new char[] { ';' }, 2)[0];
+        //}
         private static string ExportPublicKey(RSAParameters parameters)
         {
             using (var stream = new MemoryStream())
@@ -206,7 +242,7 @@ namespace blockchain1
                     EncodeLength(writer, length);
                     writer.Write(innerStream.ToArray(), 0, length);
                 }
-                return Convert.ToBase64String(stream.ToArray());
+                return ByteToString(stream.ToArray());
 
             }
         }
@@ -234,7 +270,7 @@ namespace blockchain1
                     writer.Write(innerStream.ToArray(), 0, length);
                 }
 
-                return Convert.ToBase64String(stream.ToArray());
+                return ByteToString(stream.ToArray());
 
             }
         }

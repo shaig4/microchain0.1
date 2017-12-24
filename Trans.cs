@@ -1,10 +1,13 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Text;
 
 namespace blockchain1
 {
-    public class Trans
+    [DebuggerDisplay("{this.ToString()}")]
+    [Serializable]
+    public class Coin
     {
         public string[] parents;
         public string publicKey;
@@ -12,18 +15,23 @@ namespace blockchain1
         public decimal amount;
         public string data;
         public DateTime time;
+        public bool available;
+
+        public override string ToString()
+        {
+            return $"{amount}";
+        }
     }
-    public class RequestTrans
+    public class RequestChild
     {
         public string data;
         public decimal amount;
         public string publicKey;
-        public RequestParent[] parents;
     }
     public class RequestParent
     {
         public string sig;
-        public decimal amount;
+        public string unlocker;
         public string publicKey;
     }
 }
