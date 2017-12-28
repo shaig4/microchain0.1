@@ -26,34 +26,47 @@ namespace blockchain1
             }
         }
 
-        public static Coin[] Pay(Network net, RequestParent[] requestParents, RequestChild[] requestChildren, bool genesis = false)
+        public static Coin Pay(Network net, RequestParent parents, RequestChild children, bool genesis = false)
         {
-            if (requestParents.Length > 1 && requestChildren.Length > 1)
+            return Pay(net, new RequestParent[] { parents }, new RequestChild[] { children }, genesis)[0];
+        }
+        public static Coin PayUnion(Network net, RequestParent[] parents, RequestChild children)
+        {
+            return Pay(net, parents, new RequestChild[] { children }, false)[0];
+        }
+        public static Coin[] PaySplit(Network net, RequestParent parents, RequestChild[] children)
+        {
+            return Pay(net, new RequestParent[] { parents },  children , false);
+        }
+
+        public static Coin[] Pay(Network net, RequestParent[] parents, RequestChild[] children, bool genesis)
+        {
+            if (parents.Length > 1 && children.Length > 1)
                 throw new ArgumentException("cant move many to many");
 
             if (!genesis)
             {
-                if (requestParents.GroupBy(a => a.publicKey).Count() != requestParents.Count()
-                    || requestChildren.GroupBy(a => a.publicKey).Count() != requestChildren.Count())
+                if (parents.GroupBy(a => a.publicKey).Count() != parents.Count()
+                    || children.GroupBy(a => a.publicKey).Count() != children.Count())
                     throw new ArgumentException("duplicated coins");
 
                 decimal amount = 0;
-                foreach (var parent in requestParents)
+                foreach (var parent in parents)
                 {
                     var coin = net.coins[parent.publicKey];
                     amount += coin.amount;
                     if (!VerifyData(coin.publicKey, coin.hash, parent.sig))
                         throw new ArgumentException("order could not unlock");
-                    if (coin.available)
+                    if (!coin.available)
                         throw new ArgumentException("a used coin");
                 }
-                if (requestChildren.Sum(a => a.amount) != amount)//1+1=2 || 2=1+1
+                if (children.Sum(a => a.amount) != amount)//1+1=2 || 2=1+1
                     throw new ArgumentException("orders amount not match");
             }
 
 
             var res = new List<Coin>();
-            foreach (var rt in requestChildren)
+            foreach (var rt in children)
             {
                 if (net.coins.ContainsKey(rt.publicKey))
                     throw new ArgumentException("coin alread exist");
@@ -64,16 +77,17 @@ namespace blockchain1
                     data = rt.data,
                     time = DateTime.UtcNow,
                     publicKey = rt.publicKey,
-                    parents= requestParents.Select(a=>a.publicKey).ToArray()
+                    parents= parents.Select(a=>a.publicKey).ToArray(),
+                    brothers = children.Where(a=>a!=rt).Select(a=>a.publicKey).ToArray()
                 };
 
-                var sigsBytes = requestParents.SelectMany(a => SerializeToBytes(a.sig));
+                var sigsBytes = parents.SelectMany(a => SerializeToBytes(a.sig));
                 t.hash = Hash(SerializeToBytes(t).Concat(sigsBytes).ToArray());
                 res.Add(t);
             }
 
             if (!genesis)
-                foreach (var p in requestParents)
+                foreach (var p in parents)
                     net.coins[p.publicKey].available = false;
 
             foreach (var t in res)
@@ -168,12 +182,12 @@ namespace blockchain1
         //        return ByteToString(rsa.Encrypt(Encoding.UTF8.GetBytes(secret), RSAEncryptionPadding.OaepSHA1));
         //    }
         //}
-        public static string Sign(string privateKey, string secret)
+        public static string Sign(string privateKey, string coinHash)
         {
             using (RSA rsa = RSA.Create())
             {
                 rsa.KeySize = keySize;
-                var hash = (Encoding.UTF8.GetBytes(secret));
+                var hash = (Encoding.UTF8.GetBytes(coinHash));
                 rsa.ImportParameters(RSAParametersSerializable.DeSer(privateKey));
                 return ByteToString(rsa.SignData(hash,
                    HashAlgorithmName.SHA512, RSASignaturePadding.Pkcs1));

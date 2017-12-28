@@ -10,6 +10,7 @@ namespace blockchain1
     public class Coin
     {
         public string[] parents;
+        public string[] brothers;
         public string publicKey;
         public string hash;
         public decimal amount;
@@ -19,8 +20,13 @@ namespace blockchain1
 
         public override string ToString()
         {
-            return $"{amount}";
+            return $"amount: {amount}!!!!";
         }
+    }
+    public class RequestPay
+    {
+        public RequestParent[] p;
+        public RequestChild[] c;
     }
     public class RequestChild
     {

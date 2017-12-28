@@ -9,30 +9,33 @@ namespace blockchain1
     {
         static void Main(string[] args)
         {
-            var a1 = CryptoUtils.CreateAddress();
+            var gensysWallet = new Wallet("genesis");
+            var secWallet = new Wallet("secWallet");
+            var aliceWallet = new Wallet("alice");
+            var bobWallet = new Wallet("bob");
             var net = new Network();
 
-           var  genesisTran=  CryptoUtils.Pay(net, 
-               new RequestParent[] { new RequestParent { } },
-               new RequestChild[] { new RequestChild { amount = 100, publicKey = a1.publicKey } },genesis:true);
+            var genesisCoin = CryptoUtils.Pay(net,
+             new RequestParent { },
+            new RequestChild { amount = 100, publicKey = gensysWallet.AddKey() }, genesis: true);
+
+            gensysWallet.coins.Add(genesisCoin);
 
             var start = DateTime.Now;
-            var a2 = CryptoUtils.CreateAddress();
-            var a3 = CryptoUtils.CreateAddress();
-            var a23Coins= CryptoUtils.Pay(net,new RequestParent[] {
-                new RequestParent{ publicKey = a1.publicKey, sig=CryptoUtils.Sign(a1.privateKey, genesisTran.First().hash) }
-            }, new RequestChild[] {
-                new RequestChild { amount = 10, publicKey = a2.publicKey },
-                new RequestChild { amount = 90, publicKey = a3.publicKey },
+            var a23Coins= CryptoUtils.PaySplit(net,
+                new RequestParent{ publicKey= genesisCoin.publicKey, sig = gensysWallet.Sign(genesisCoin) }
+            , new RequestChild[] {
+                new RequestChild { amount = 10, publicKey = aliceWallet.AddKey()},
+                new RequestChild { amount = 90, publicKey = bobWallet.AddKey() },
             });
 
             var a4 = CryptoUtils.CreateAddress();
-            CryptoUtils.Pay(net, new RequestParent[] {
-                new RequestParent{ publicKey = a2.publicKey, sig=CryptoUtils.Sign(a2.privateKey, a23Coins[0].hash) },
-                new RequestParent{ publicKey = a3.publicKey, sig=CryptoUtils.Sign(a3.privateKey, a23Coins[1].hash) }
-            }, new RequestChild[] {
-                new RequestChild { amount = 100, publicKey = a4.publicKey },
-            });
+            CryptoUtils.PayUnion(net, new RequestParent[] {
+                new RequestParent{ publicKey = aliceWallet.pubPriv.First().Key, sig=CryptoUtils.Sign(aliceWallet.pubPriv.First().Value, a23Coins[0].hash) },
+                new RequestParent{ publicKey = bobWallet.pubPriv.First().Key, sig=CryptoUtils.Sign(bobWallet.pubPriv.First().Value, a23Coins[1].hash) }
+            },
+                new RequestChild { amount = 100, publicKey = a4.publicKey }
+            );
             var ms = DateTime.Now.Subtract(start).TotalMilliseconds;
            
         }
